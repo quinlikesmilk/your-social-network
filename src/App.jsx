@@ -5,7 +5,7 @@ import People from "./people"
 import EditProfile from "./edit-profile"
 import Signup from "./signup"
 import Login from "./login"
-import { supabase } from "./lib/supabase"
+import { supabase } from "./lib/supabase.js"
 import Messages from "./messages"
 
 function App() {
@@ -71,6 +71,39 @@ if (path === "/edit-profile") {
     return <People />
   }
 
+if (!user) {
+  return (
+    <div>
+      <header className="site-header">
+        <h1 className="site-title">
+          your <span>social network</span>
+        </h1>
+      </header>
+
+      <main className="home">
+        <section className="welcome">
+          <h2>Welcome to your social network.</h2>
+
+          <p>
+            Find people you know, want to know,
+            and connect! :)
+          </p>
+        </section>
+
+        <section className="options">
+          <a href="/login" className="option">
+            Log in
+          </a>
+
+          <a href="/signup" className="option">
+            Sign up
+          </a>
+        </section>
+      </main>
+    </div>
+  )
+}
+  
   return (
     <div>
       <header className="site-header">
