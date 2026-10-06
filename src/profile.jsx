@@ -2,34 +2,40 @@ import { useEffect, useState } from "react"
 import { supabase } from "./lib/supabase.js"
 
 function Profile() {
-const [profile, setProfile] = useState(null)
-const [connectionCount, setConnectionCount] = useState(0)
-const [avatarUrl, setAvatarUrl] = useState(null)
-const [loading, setLoading] = useState(true)
-const [bannerUrl, setBannerUrl] = useState(null)
+  const [profile, setProfile] = useState(null)
+  const [connectionCount, setConnectionCount] = useState(0)
+  const [avatarUrl, setAvatarUrl] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [bannerUrl, setBannerUrl] = useState(null)
 
   useEffect(() => {
     async function loadProfile() {
       const pathParts = window.location.pathname.split("/")
+
       const username = pathParts[2]
+        ? decodeURIComponent(pathParts[2])
+        : null
 
       let query = supabase
         .from("profiles")
         .select(
-"id, username, age, school, location, state, bio, hobbies, interests, avatar_url, banner_url"
+          "id, username, age, school, location, state, bio, hobbies, interests, avatar_url, banner_url"
         )
 
       if (username) {
         query = query.eq("username", username).single()
       } else {
-        const { data: userData } = await supabase.auth.getUser()
+        const { data: userData } =
+          await supabase.auth.getUser()
 
         if (!userData.user) {
           setLoading(false)
           return
         }
 
-        query = query.eq("id", userData.user.id).single()
+        query = query
+          .eq("id", userData.user.id)
+          .single()
       }
 
       const { data: profileData, error } = await query
@@ -42,61 +48,69 @@ const [bannerUrl, setBannerUrl] = useState(null)
 
       setProfile(profileData)
 
-if (profileData.avatar_url) {
-  const { data: avatarData, error: avatarError } =
-    await supabase.storage
-      .from("profile-images")
-      .createSignedUrl(
-        profileData.avatar_url,
-        60 * 60
-      )
+      if (profileData.avatar_url) {
+        const { data: avatarData, error: avatarError } =
+          await supabase.storage
+            .from("profile-images")
+            .createSignedUrl(
+              profileData.avatar_url,
+              60 * 60
+            )
 
-  if (avatarError) {
-    console.error(
-      "Avatar URL error:",
-      avatarError
-    )
-  } else {
-    setAvatarUrl(avatarData.signedUrl)
-  }
-}
+        if (avatarError) {
+          console.error(
+            "Avatar URL error:",
+            avatarError
+          )
+        } else {
+          setAvatarUrl(avatarData.signedUrl)
+        }
+      }
 
-if (profileData.banner_url) {
-  const { data: bannerData, error: bannerError } =
-    await supabase.storage
-      .from("profile-images")
-      .createSignedUrl(
-        profileData.banner_url,
-        60 * 60
-      )
+      if (profileData.banner_url) {
+        const { data: bannerData, error: bannerError } =
+          await supabase.storage
+            .from("profile-images")
+            .createSignedUrl(
+              profileData.banner_url,
+              60 * 60
+            )
 
-  if (bannerError) {
-    console.error(
-      "Banner URL error:",
-      bannerError
-    )
-  } else {
-    setBannerUrl(bannerData.signedUrl)
-  }
-}
+        if (bannerError) {
+          console.error(
+            "Banner URL error:",
+            bannerError
+          )
+        } else {
+          setBannerUrl(bannerData.signedUrl)
+        }
+      }
 
-      const { count: connectionCountData, error: connectionError } =
-  await supabase
-    .from("connections")
-    .select("*", { count: "exact", head: true })
-    .eq("status", "accepted")
-    .or(
-      `sender_id.eq.${profileData.id},receiver_id.eq.${profileData.id}`
-    )
+      const {
+        count: connectionCountData,
+        error: connectionError
+      } = await supabase
+        .from("connections")
+        .select("*", {
+          count: "exact",
+          head: true
+        })
+        .eq("status", "accepted")
+        .or(
+          `sender_id.eq.${profileData.id},receiver_id.eq.${profileData.id}`
+        )
 
-if (connectionError) {
-  console.error(
-    "Connections error:",
-    connectionError
-  )
-} else {
-  setConnectionCount(connectionCountData || 0)
-}
+      if (connectionError) {
+        console.error(
+          "Connections error:",
+          connectionError
+        )
+      } else {
+        setConnectionCount(
+          connectionCountData || 0
+        )
+      }
+
       setLoading(false)
     }
 
@@ -113,6 +127,10 @@ if (connectionError) {
 
   const viewingOtherProfile =
     window.location.pathname.split("/")[2]
+      ? decodeURIComponent(
+          window.location.pathname.split("/")[2]
+        )
+      : null
 
   return (
     <div>
@@ -124,74 +142,75 @@ if (connectionError) {
 
         <nav>
           <a href="/">Home</a>
-          <a href="#">Messages</a>
-          <a href="#">Notifications</a>
+          <a href="/messages">Messages</a>
+          <a href="/notifications">
+            Notifications
+          </a>
         </nav>
       </header>
 
       <main className="home">
 
-        <a href="/home" className="back">
+        <a href="/" className="back">
           ← back to home
         </a>
 
-<div className="profile-header">
+        <div className="profile-header">
 
-  {bannerUrl && (
-    <img
-      src={bannerUrl}
-      alt=""
-      className="profile-banner"
-    />
-  )}
+          {bannerUrl && (
+            <img
+              src={bannerUrl}
+              alt=""
+              className="profile-banner"
+            />
+          )}
 
-  {avatarUrl && (
-    <img
-      src={avatarUrl}
-      alt={`${profile.username}'s profile`}
-      className="profile-picture"
-    />
-  )}
+          {avatarUrl && (
+            <img
+              src={avatarUrl}
+              alt={`${profile.username}'s profile`}
+              className="profile-picture"
+            />
+          )}
 
-</div>
+        </div>
 
         <h2>
           {profile.username}
           {viewingOtherProfile && "!!"}
-          {viewingOtherProfile && (
-            <span className="profile-connect">
-            </span>
-          )}
         </h2>
 
         {!viewingOtherProfile && (
-  <>
-    <p>
-      {profile.age
-        ? `${profile.age} years old`
-        : "Age not set"}
-    </p>
+          <>
+            <p>
+              {profile.age
+                ? `${profile.age} years old`
+                : "Age not set"}
+            </p>
 
-    <p>
-      {profile.school || "School not set"}
-    </p>
+            <p>
+              {profile.school ||
+                "School not set"}
+            </p>
 
-    <p>
-      {profile.location && profile.state
-        ? `${profile.location}, ${profile.state}`
-        : profile.location ||
-          profile.state ||
-          "Location not set"}
-    </p>
-  </>
-)}
+            <p>
+              {profile.location &&
+              profile.state
+                ? `${profile.location}, ${profile.state}`
+                : profile.location ||
+                  profile.state ||
+                  "Location not set"}
+            </p>
+          </>
+        )}
 
         <section className="profile-info">
 
           <h3>About</h3>
 
           <p>
-            {profile.bio || "No bio yet."}
+            {profile.bio ||
+              "No bio yet."}
           </p>
 
         </section>
@@ -201,7 +220,8 @@ if (connectionError) {
           <h3>Hobbies</h3>
 
           <p>
-            {profile.hobbies || "No hobbies listed yet."}
+            {profile.hobbies ||
+              "No hobbies listed yet."}
           </p>
 
         </section>
@@ -216,17 +236,19 @@ if (connectionError) {
               {profile.interests.join(" · ")}
             </p>
           ) : (
-            <p>No interests listed yet.</p>
+            <p>
+              No interests listed yet.
+            </p>
           )}
 
         </section>
 
         <p>
-  {connectionCount}{" "}
-  {connectionCount === 1
-    ? "connection"
-    : "connections"}
-</p>
+          {connectionCount}{" "}
+          {connectionCount === 1
+            ? "connection"
+            : "connections"}
+        </p>
 
         {!viewingOtherProfile && (
           <a
