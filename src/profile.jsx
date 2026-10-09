@@ -5,113 +5,121 @@ function Profile() {
   const [profile, setProfile] = useState(null)
   const [connectionCount, setConnectionCount] = useState(0)
   const [avatarUrl, setAvatarUrl] = useState(null)
-  const [loading, setLoading] = useState(true)
   const [bannerUrl, setBannerUrl] = useState(null)
+  const [backgroundImageUrl, setBackgroundImageUrl] =
+    useState(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function loadProfile() {
-      const pathParts = window.location.pathname.split("/")
+      try {
+        const pathParts =
+          window.location.pathname.split("/")
 
-      const username = pathParts[2]
-        ? decodeURIComponent(pathParts[2])
-        : null
+        const username = pathParts[2]
+          ? decodeURIComponent(pathParts[2])
+          : null
 
-      let query = supabase
-        .from("profiles")
-        .select(
-          "id, username, age, school, location, state, bio, hobbies, interests, avatar_url, banner_url"
-        )
+        let query = supabase
+          .from("profiles")
+          .select(
+            "id, username, age, school, location, state, bio, hobbies, interests, avatar_url, banner_url, profile_background_type, profile_background_value, profile_background_secondary, profile_background_image_url"
+          )
 
-      if (username) {
-        query = query.eq("username", username).single()
-      } else {
-        const { data: userData } =
-          await supabase.auth.getUser()
+        if (username) {
+          query = query
+            .eq("username", username)
+            .single()
+        } else {
+          const { data: userData } =
+            await supabase.auth.getUser()
 
-        if (!userData.user) {
+          if (!userData.user) {
+            setLoading(false)
+            return
+          }
+
+          query = query
+            .eq("id", userData.user.id)
+            .single()
+        }
+
+        const { data: profileData, error } =
+          await query
+
+        if (error) {
+          console.error("Profile error:", error)
           setLoading(false)
           return
         }
 
-        query = query
-          .eq("id", userData.user.id)
-          .single()
-      }
+        setProfile(profileData)
 
-      const { data: profileData, error } = await query
+        async function getImageUrl(path, label) {
+          if (!path) return null
 
-      if (error) {
-        console.error("Profile error:", error)
-        setLoading(false)
-        return
-      }
+          const { data, error } =
+            await supabase.storage
+              .from("profile-images")
+              .createSignedUrl(path, 60 * 60)
 
-      setProfile(profileData)
+          if (error) {
+            console.error(`${label} URL error:`, error)
+            return null
+          }
 
-      if (profileData.avatar_url) {
-        const { data: avatarData, error: avatarError } =
-          await supabase.storage
-            .from("profile-images")
-            .createSignedUrl(
+          return data.signedUrl
+        }
+
+        const [avatar, banner, background] =
+          await Promise.all([
+            getImageUrl(
               profileData.avatar_url,
-              60 * 60
-            )
-
-        if (avatarError) {
-          console.error(
-            "Avatar URL error:",
-            avatarError
-          )
-        } else {
-          setAvatarUrl(avatarData.signedUrl)
-        }
-      }
-
-      if (profileData.banner_url) {
-        const { data: bannerData, error: bannerError } =
-          await supabase.storage
-            .from("profile-images")
-            .createSignedUrl(
+              "Avatar"
+            ),
+            getImageUrl(
               profileData.banner_url,
-              60 * 60
-            )
+              "Banner"
+            ),
+            getImageUrl(
+              profileData.profile_background_image_url,
+              "Background"
+            ),
+          ])
 
-        if (bannerError) {
+        setAvatarUrl(avatar)
+        setBannerUrl(banner)
+        setBackgroundImageUrl(background)
+
+        const {
+          count: connectionCountData,
+          error: connectionError,
+        } = await supabase
+          .from("connections")
+          .select("*", {
+            count: "exact",
+            head: true,
+          })
+          .eq("status", "accepted")
+          .or(
+            `sender_id.eq.${profileData.id},receiver_id.eq.${profileData.id}`
+          )
+
+        if (connectionError) {
           console.error(
-            "Banner URL error:",
-            bannerError
+            "Connections error:",
+            connectionError
           )
         } else {
-          setBannerUrl(bannerData.signedUrl)
+          setConnectionCount(
+            connectionCountData || 0
+          )
         }
+      } catch (error) {
+        console.error("Could not load profile:", error)
+      } finally {
+        setLoading(false)
       }
-
-      const {
-        count: connectionCountData,
-        error: connectionError
-      } = await supabase
-        .from("connections")
-        .select("*", {
-          count: "exact",
-          head: true
-        })
-        .eq("status", "accepted")
-        .or(
-          `sender_id.eq.${profileData.id},receiver_id.eq.${profileData.id}`
-        )
-
-      if (connectionError) {
-        console.error(
-          "Connections error:",
-          connectionError
-        )
-      } else {
-        setConnectionCount(
-          connectionCountData || 0
-        )
-      }
-
-      setLoading(false)
     }
 
     loadProfile()
@@ -125,16 +133,57 @@ function Profile() {
     return <p>Profile not found.</p>
   }
 
-  const viewingOtherProfile =
-    window.location.pathname.split("/")[2]
-      ? decodeURIComponent(
-          window.location.pathname.split("/")[2]
-        )
-      : null
+  const pathParts = window.location.pathname.split("/")
+  const viewingOtherProfile = Boolean(pathParts[2])
+
+  const backgroundType =
+    profile.profile_background_type || "color"
+
+  const backgroundValue =
+    profile.profile_background_value || "#ffffff"
+
+  let backgroundStyle = {
+    backgroundColor: "#ffffff",
+  }
+
+  if (backgroundType === "color") {
+    backgroundStyle = {
+      backgroundColor: backgroundValue,
+    }
+  }
+
+  if (backgroundType === "gradient") {
+    const secondColor =
+      profile.profile_background_secondary || "#1aab65"
+
+    backgroundStyle = {
+      background: `linear-gradient(135deg, ${backgroundValue}, ${secondColor})`,
+    }
+  }
+
+  if (
+    backgroundType === "image" &&
+    backgroundImageUrl
+  ) {
+    backgroundStyle = {
+      backgroundColor: "#ffffff",
+      backgroundImage: `url("${backgroundImageUrl}")`,
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+      backgroundRepeat: "no-repeat",
+      backgroundAttachment: "fixed",
+    }
+  }
 
   return (
-    <div>
-
+    <div
+      style={{
+        ...backgroundStyle,
+        minHeight: "100vh",
+        backgroundColor:
+          backgroundStyle.backgroundColor || undefined,
+      }}
+    >
       <header className="site-header">
         <h1 className="site-title">
           your <span>social network</span>
@@ -143,20 +192,16 @@ function Profile() {
         <nav>
           <a href="/">Home</a>
           <a href="/messages">Messages</a>
-          <a href="/notifications">
-            Notifications
-          </a>
+          <a href="/notifications">Notifications</a>
         </nav>
       </header>
 
       <main className="home">
-
         <a href="/" className="back">
           ← back to home
         </a>
 
         <div className="profile-header">
-
           {bannerUrl && (
             <img
               src={bannerUrl}
@@ -172,7 +217,6 @@ function Profile() {
               className="profile-picture"
             />
           )}
-
         </div>
 
         <h2>
@@ -189,13 +233,11 @@ function Profile() {
             </p>
 
             <p>
-              {profile.school ||
-                "School not set"}
+              {profile.school || "School not set"}
             </p>
 
             <p>
-              {profile.location &&
-              profile.state
+              {profile.location && profile.state
                 ? `${profile.location}, ${profile.state}`
                 : profile.location ||
                   profile.state ||
@@ -205,42 +247,28 @@ function Profile() {
         )}
 
         <section className="profile-info">
-
           <h3>About</h3>
-
-          <p>
-            {profile.bio ||
-              "No bio yet."}
-          </p>
-
+          <p>{profile.bio || "No bio yet."}</p>
         </section>
 
         <section className="profile-info">
-
           <h3>Hobbies</h3>
-
           <p>
             {profile.hobbies ||
               "No hobbies listed yet."}
           </p>
-
         </section>
 
         <section className="profile-info">
-
           <h3>Interests</h3>
 
-          {profile.interests &&
-          profile.interests.length > 0 ? (
+          {profile.interests?.length > 0 ? (
             <p>
               {profile.interests.join(" · ")}
             </p>
           ) : (
-            <p>
-              No interests listed yet.
-            </p>
+            <p>No interests listed yet.</p>
           )}
-
         </section>
 
         <p>
@@ -258,9 +286,7 @@ function Profile() {
             Edit profile
           </a>
         )}
-
       </main>
-
     </div>
   )
 }

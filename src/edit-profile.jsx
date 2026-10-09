@@ -10,33 +10,45 @@ function EditProfile() {
   const [bio, setBio] = useState("")
   const [hobbies, setHobbies] = useState("")
   const [interests, setInterests] = useState("")
-  const [message, setMessage] = useState("")
+
   const [avatarFile, setAvatarFile] = useState(null)
-const [bannerFile, setBannerFile] = useState(null)
+  const [bannerFile, setBannerFile] = useState(null)
+
+  const [backgroundType, setBackgroundType] =
+    useState("color")
+  const [backgroundColor, setBackgroundColor] =
+    useState("#ffffff")
+  const [gradientStart, setGradientStart] =
+    useState("#ffffff")
+  const [gradientEnd, setGradientEnd] =
+    useState("#1aab65")
+  const [backgroundFile, setBackgroundFile] =
+    useState(null)
+  const [backgroundImagePath, setBackgroundImagePath] =
+    useState("")
+
+  const [message, setMessage] = useState("")
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     async function loadProfile() {
-      const { data: userData } = await supabase.auth.getUser()
+      const { data: userData } =
+        await supabase.auth.getUser()
 
-      if (!userData.user) {
-        return
-      }
+      if (!userData.user) return
 
-
-
-      const { data: profileData, error } = await supabase
-        .from("profiles")
-
-        .select(
-          "username, age, school, location, state, bio, hobbies, interests"
-        )
-        .eq("id", userData.user.id)
-        .single()
-
-
+      const { data: profileData, error } =
+        await supabase
+          .from("profiles")
+          .select(
+            "username, age, school, location, state, bio, hobbies, interests, profile_background_type, profile_background_value, profile_background_secondary, profile_background_image_url"
+          )
+          .eq("id", userData.user.id)
+          .single()
 
       if (error) {
         console.error("Profile error:", error)
+        setMessage("Could not load your profile.")
         return
       }
 
@@ -47,7 +59,35 @@ const [bannerFile, setBannerFile] = useState(null)
       setState(profileData.state || "")
       setBio(profileData.bio || "")
       setHobbies(profileData.hobbies || "")
-      setInterests((profileData.interests || []).join(", "))
+      setInterests(
+        (profileData.interests || []).join(", ")
+      )
+
+      const type =
+        profileData.profile_background_type || "color"
+
+      setBackgroundType(type)
+
+      if (type === "gradient") {
+        const colors = (
+          profileData.profile_background_value || "#ffffff"
+        ).split("|")
+
+        setGradientStart(colors[0] || "#ffffff")
+        setGradientEnd(
+          profileData.profile_background_secondary ||
+          colors[1] ||
+          "#1aab65"
+        )
+      } else {
+        setBackgroundColor(
+          profileData.profile_background_value || "#ffffff"
+        )
+      }
+
+      setBackgroundImagePath(
+        profileData.profile_background_image_url || ""
+      )
     }
 
     loadProfile()
@@ -55,122 +95,150 @@ const [bannerFile, setBannerFile] = useState(null)
 
   async function handleSave(event) {
     event.preventDefault()
-
+    setSaving(true)
     setMessage("Saving...")
 
-    const { data: userData } = await supabase.auth.getUser()
+    try {
+      const { data: userData, error: authError } =
+        await supabase.auth.getUser()
 
-    if (!userData.user) {
-      setMessage("You are not logged in.")
-      return
-    }
-
-    const interestList = interests
-      .split(",")
-      .map((interest) => interest.trim())
-      .filter((interest) => interest !== "")
-
-      const maxFileSize = 5 * 1024 * 1024
-
-if (avatarFile) {
-  if (!avatarFile.type.startsWith("image/")) {
-    setMessage("Profile picture must be an image.")
-    return
-  }
-
-  if (avatarFile.size > maxFileSize) {
-    setMessage("Profile picture must be smaller than 5 MB.")
-    return
-  }
-}
-
-if (bannerFile) {
-  if (!bannerFile.type.startsWith("image/")) {
-    setMessage("Banner image must be an image.")
-    return
-  }
-
-  if (bannerFile.size > maxFileSize) {
-    setMessage("Banner image must be smaller than 5 MB.")
-    return
-  }
-}
+      if (authError || !userData.user) {
+        setMessage("You are not logged in.")
+        return
+      }
 
       const userId = userData.user.id
+      const maxFileSize = 5 * 1024 * 1024
 
-let avatarUrl = null
-let bannerUrl = null
+      const filesToCheck = [
+        [avatarFile, "Profile picture"],
+        [bannerFile, "Banner image"],
+        [backgroundFile, "Background image"],
+      ]
 
-if (avatarFile) {
-  const avatarPath = `${userId}/avatar-${Date.now()}-${avatarFile.name}`
+      for (const [file, label] of filesToCheck) {
+        if (!file) continue
 
-  const { error: avatarError } =
-    await supabase.storage
-      .from("profile-images")
-      .upload(avatarPath, avatarFile, {
-        upsert: false,
-      })
+        if (!file.type.startsWith("image/")) {
+          setMessage(`${label} must be an image.`)
+          return
+        }
 
-  if (avatarError) {
-    console.error("Avatar upload error:", avatarError)
-    setMessage("Could not upload profile picture.")
-    return
-  }
+        if (file.size > maxFileSize) {
+          setMessage(
+            `${label} must be smaller than 5 MB.`
+          )
+          return
+        }
+      }
 
-  avatarUrl = avatarPath
-}
+      const interestList = interests
+        .split(",")
+        .map((interest) => interest.trim())
+        .filter(Boolean)
 
-if (bannerFile) {
-  const bannerPath = `${userId}/banner-${Date.now()}-${bannerFile.name}`
+      async function uploadImage(file, prefix) {
+        if (!file) return null
 
-  const { error: bannerError } =
-    await supabase.storage
-      .from("profile-images")
-      .upload(bannerPath, bannerFile, {
-        upsert: false,
-      })
+        const safeName = file.name.replace(
+          /[^a-zA-Z0-9._-]/g,
+          "_"
+        )
 
-  if (bannerError) {
-    console.error("Banner upload error:", bannerError)
-    setMessage("Could not upload banner image.")
-    return
-  }
+        const path =
+          `${userId}/${prefix}-${Date.now()}-${safeName}`
 
-  bannerUrl = bannerPath
-}
+        const { error } = await supabase.storage
+          .from("profile-images")
+          .upload(path, file, { upsert: false })
 
-    const { error } = await supabase
-      .from("profiles")
-      .update({
-  username,
-  age: age ? Number(age) : null,
-  school,
-  location,
-  state,
-  bio,
-  hobbies,
-  interests: interestList,
-  ...(avatarUrl && {
-    avatar_url: avatarUrl,
-  }),
-  ...(bannerUrl && {
-    banner_url: bannerUrl,
-  }),
-})
-      .eq("id", userData.user.id)
+        if (error) throw error
 
-    if (error) {
+        return path
+      }
+
+      const avatarUrl = await uploadImage(
+        avatarFile,
+        "avatar"
+      )
+
+      const bannerUrl = await uploadImage(
+        bannerFile,
+        "banner"
+      )
+
+      let savedBackgroundImagePath =
+        backgroundImagePath
+
+      if (backgroundType === "image") {
+        if (backgroundFile) {
+          savedBackgroundImagePath =
+            await uploadImage(
+              backgroundFile,
+              "background"
+            )
+        }
+
+        if (!savedBackgroundImagePath) {
+          setMessage(
+            "Choose a background image first."
+          )
+          return
+        }
+      }
+
+      let backgroundValue = backgroundColor
+
+      if (backgroundType === "gradient") {
+        backgroundValue = gradientStart
+      }
+
+      const updates = {
+        username,
+        age: age ? Number(age) : null,
+        school,
+        location,
+        state,
+        bio,
+        hobbies,
+        interests: interestList,
+        profile_background_type: backgroundType,
+        profile_background_value: backgroundValue,
+        profile_background_secondary: gradientEnd,
+        profile_background_image_url:
+          savedBackgroundImagePath || null,
+      }
+
+      if (avatarUrl) updates.avatar_url = avatarUrl
+      if (bannerUrl) updates.banner_url = bannerUrl
+
+      const { error } = await supabase
+        .from("profiles")
+        .update(updates)
+        .eq("id", userId)
+
+      if (error) throw error
+
+      setBackgroundImagePath(
+        savedBackgroundImagePath
+      )
+      setAvatarFile(null)
+      setBannerFile(null)
+      setBackgroundFile(null)
+      setMessage("Profile saved!")
+
+    } catch (error) {
       console.error("Save error:", error)
-      setMessage(error.message)
-      return
+      setMessage(
+        error.message || "Could not save your profile."
+      )
+    } finally {
+      setSaving(false)
     }
-
-    setMessage("Profile saved!")
   }
 
   return (
     <div>
-
       <header className="site-header">
         <h1 className="site-title">
           your <span>social network</span>
@@ -178,51 +246,151 @@ if (bannerFile) {
 
         <nav>
           <a href="/">Home</a>
-          <a href="#">Messages</a>
-          <a href="#">Notifications</a>
+          <a href="/messages">Messages</a>
+          <a href="/notifications">Notifications</a>
         </nav>
       </header>
 
       <main className="home">
-
-        <a href="/home" className="back">
-          ← back to home
+        <a href="/profile" className="back">
+          ← back to profile
         </a>
 
         <h2>Edit your profile</h2>
 
-        <form className="profile-form" onSubmit={handleSave}>
+        <form
+          className="profile-form"
+          onSubmit={handleSave}
+        >
+          <label>
+            Profile picture
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(event) =>
+                setAvatarFile(
+                  event.target.files?.[0] || null
+                )
+              }
+            />
+          </label>
 
-<div>
-  <label>
-    Profile picture
-    <input
-      type="file"
-      accept="image/*"
-      onChange={(event) =>
-        setAvatarFile(event.target.files[0])
-      }
-    />
-  </label>
+          <label>
+            Banner image
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(event) =>
+                setBannerFile(
+                  event.target.files?.[0] || null
+                )
+              }
+            />
+          </label>
 
-  <label>
-    Banner image
-    <input
-      type="file"
-      accept="image/*"
-      onChange={(event) =>
-        setBannerFile(event.target.files[0])
-      }
-    />
-  </label>
-</div>
+          <hr />
+
+          <h3>Customize your background 🎨</h3>
+
+          <label>
+            Background type
+            <select
+              value={backgroundType}
+              onChange={(event) =>
+                setBackgroundType(event.target.value)
+              }
+            >
+              <option value="color">Solid color</option>
+              <option value="gradient">Gradient</option>
+              <option value="image">Custom image</option>
+            </select>
+          </label>
+
+          {backgroundType === "color" && (
+            <label>
+              Background color
+              <input
+                type="color"
+                value={backgroundColor}
+                onChange={(event) =>
+                  setBackgroundColor(event.target.value)
+                }
+              />
+            </label>
+          )}
+
+          {backgroundType === "gradient" && (
+            <>
+              <label>
+                First gradient color
+                <input
+                  type="color"
+                  value={gradientStart}
+                  onChange={(event) =>
+                    setGradientStart(event.target.value)
+                  }
+                />
+              </label>
+
+              <label>
+                Second gradient color
+                <input
+                  type="color"
+                  value={gradientEnd}
+                  onChange={(event) =>
+                    setGradientEnd(event.target.value)
+                  }
+                />
+              </label>
+
+              <div
+                aria-label="Gradient preview"
+                style={{
+                  height: "100px",
+                  border: "1px solid #ddd",
+                  background: `linear-gradient(135deg, ${gradientStart}, ${gradientEnd})`,
+                }}
+              />
+            </>
+          )}
+
+          {backgroundType === "image" && (
+            <>
+              <label>
+                Background image
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) =>
+                    setBackgroundFile(
+                      event.target.files?.[0] || null
+                    )
+                  }
+                />
+                <span className="form-help">
+                  Choose an image smaller than 5 MB.
+                </span>
+              </label>
+
+              {backgroundImagePath && !backgroundFile && (
+                <p className="form-help">
+                  You already have a background image saved.
+                  Upload another to replace it.
+                </p>
+              )}
+            </>
+          )}
+
+          <hr />
 
           <label>
             Username
             <input
               type="text"
               value={username}
-              onChange={(event) => setUsername(event.target.value)}
+              onChange={(event) =>
+                setUsername(event.target.value)
+              }
               required
             />
           </label>
@@ -232,7 +400,9 @@ if (bannerFile) {
             <input
               type="number"
               value={age}
-              onChange={(event) => setAge(event.target.value)}
+              onChange={(event) =>
+                setAge(event.target.value)
+              }
               min="13"
               max="19"
             />
@@ -243,7 +413,9 @@ if (bannerFile) {
             <input
               type="text"
               value={school}
-              onChange={(event) => setSchool(event.target.value)}
+              onChange={(event) =>
+                setSchool(event.target.value)
+              }
               placeholder="Your school"
             />
           </label>
@@ -253,7 +425,9 @@ if (bannerFile) {
             <input
               type="text"
               value={location}
-              onChange={(event) => setLocation(event.target.value)}
+              onChange={(event) =>
+                setLocation(event.target.value)
+              }
               placeholder="Your city or community"
             />
           </label>
@@ -263,7 +437,9 @@ if (bannerFile) {
             <input
               type="text"
               value={state}
-              onChange={(event) => setState(event.target.value)}
+              onChange={(event) =>
+                setState(event.target.value)
+              }
               placeholder="Your state"
             />
           </label>
@@ -272,7 +448,9 @@ if (bannerFile) {
             Bio
             <textarea
               value={bio}
-              onChange={(event) => setBio(event.target.value)}
+              onChange={(event) =>
+                setBio(event.target.value)
+              }
               placeholder="Tell people a little about yourself"
               rows="4"
             />
@@ -282,7 +460,9 @@ if (bannerFile) {
             Hobbies
             <textarea
               value={hobbies}
-              onChange={(event) => setHobbies(event.target.value)}
+              onChange={(event) =>
+                setHobbies(event.target.value)
+              }
               placeholder="What do you like doing?"
               rows="4"
             />
@@ -293,24 +473,23 @@ if (bannerFile) {
             <input
               type="text"
               value={interests}
-              onChange={(event) => setInterests(event.target.value)}
-              placeholder="Minecraft, Tyler, the Creator, horror movies..."
+              onChange={(event) =>
+                setInterests(event.target.value)
+              }
+              placeholder="Minecraft, music, horror movies..."
             />
             <span className="form-help">
               Separate interests with commas.
             </span>
           </label>
 
-          <button type="submit">
-            Save changes
+          <button type="submit" disabled={saving}>
+            {saving ? "Saving..." : "Save changes"}
           </button>
-
         </form>
 
-        {message && <p>{message}</p>}
-
+        {message && <p role="status">{message}</p>}
       </main>
-
     </div>
   )
 }
