@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from "react"
 import { supabase } from "./lib/supabase.js"
 
@@ -11,16 +12,19 @@ function Messages() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    let cancelled = false
+
     async function loadMessages() {
       const { data: userData, error: userError } =
         await supabase.auth.getUser()
 
       if (userError || !userData.user) {
         console.error("User error:", userError)
-        setLoading(false)
+        if (!cancelled) setLoading(false)
         return
       }
 
+      if (cancelled) return
       setUser(userData.user)
 
       const { data: connectionData, error: connectionError } =
@@ -33,17 +37,15 @@ function Messages() {
           )
 
       if (connectionError) {
-        console.error(
-          "Connections error:",
-          connectionError
-        )
-        setLoading(false)
+        console.error("Connections error:", connectionError)
+        if (!cancelled) setLoading(false)
         return
       }
 
-      setConnections(connectionData)
+      if (cancelled) return
+      setConnections(connectionData || [])
 
-      const connectedIds = connectionData.map((connection) =>
+      const connectedIds = (connectionData || []).map((connection) =>
         connection.sender_id === userData.user.id
           ? connection.receiver_id
           : connection.sender_id
@@ -62,41 +64,25 @@ function Messages() {
           .in("id", connectedIds)
 
       if (profileError) {
-        console.error(
-          "Profiles error:",
-          profileError
-        )
-        setLoading(false)
+        console.error("Profiles error:", profileError)
+        if (!cancelled) setLoading(false)
         return
       }
 
       const profilesWithAvatars = await Promise.all(
-        profileData.map(async (profile) => {
+        (profileData || []).map(async (profile) => {
           if (!profile.avatar_url) {
-            return {
-              ...profile,
-              avatarDisplayUrl: null,
-            }
+            return { ...profile, avatarDisplayUrl: null }
           }
 
           const { data: avatarData, error: avatarError } =
             await supabase.storage
               .from("profile-images")
-              .createSignedUrl(
-                profile.avatar_url,
-                60 * 60
-              )
+              .createSignedUrl(profile.avatar_url, 60 * 60)
 
           if (avatarError) {
-            console.error(
-              "Avatar URL error:",
-              avatarError
-            )
-
-            return {
-              ...profile,
-              avatarDisplayUrl: null,
-            }
+            console.error("Avatar URL error:", avatarError)
+            return { ...profile, avatarDisplayUrl: null }
           }
 
           return {
@@ -106,39 +92,111 @@ function Messages() {
         })
       )
 
+      if (cancelled) return
       setProfiles(profilesWithAvatars)
       setLoading(false)
     }
 
     loadMessages()
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
-  async function openConversation(person) {
-    setSelectedPerson(person)
+  useEffect(() => {
+    if (!user || !selectedPerson) return
 
-    if (!user) {
-      return
+    let cancelled = false
+
+    async function loadConversation() {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id, sender_id, receiver_id, content, created_at")
+        .or(
+          `and(sender_id.eq.${user.id},receiver_id.eq.${selectedPerson.id}),and(sender_id.eq.${selectedPerson.id},receiver_id.eq.${user.id})`
+        )
+        .order("created_at", { ascending: true })
+
+      if (error) {
+        console.error("Messages error:", error)
+        return
+      }
+
+      if (!cancelled) {
+        setMessages(data || [])
+      }
     }
 
-    const { data, error } = await supabase
-      .from("messages")
-      .select("id, sender_id, receiver_id, content, created_at")
-      .or(
-        `and(sender_id.eq.${user.id},receiver_id.eq.${person.id}),and(sender_id.eq.${person.id},receiver_id.eq.${user.id})`
+    loadConversation()
+
+    const channel = supabase
+      .channel(`messages-${user.id}-${selectedPerson.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `receiver_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const message = payload.new
+
+          if (message.sender_id !== selectedPerson.id) return
+
+          setMessages((currentMessages) => {
+            if (currentMessages.some((item) => item.id === message.id)) {
+              return currentMessages
+            }
+
+            return [...currentMessages, message].sort(
+              (a, b) =>
+                new Date(a.created_at) - new Date(b.created_at)
+            )
+          })
+        }
       )
-      .order("created_at", {
-        ascending: true,
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `sender_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const message = payload.new
+
+          if (message.receiver_id !== selectedPerson.id) return
+
+          setMessages((currentMessages) => {
+            if (currentMessages.some((item) => item.id === message.id)) {
+              return currentMessages
+            }
+
+            return [...currentMessages, message].sort(
+              (a, b) =>
+                new Date(a.created_at) - new Date(b.created_at)
+            )
+          })
+        }
+      )
+      .subscribe((status) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.error("Realtime subscription status:", status)
+        }
       })
 
-    if (error) {
-      console.error(
-        "Messages error:",
-        error
-      )
-      return
+    return () => {
+      cancelled = true
+      supabase.removeChannel(channel)
     }
+  }, [user, selectedPerson])
 
-    setMessages(data)
+  async function openConversation(person) {
+    setMessages([])
+    setSelectedPerson(person)
   }
 
   async function handleSend(event) {
@@ -146,36 +204,22 @@ function Messages() {
 
     const content = newMessage.trim()
 
-    if (!content || !selectedPerson || !user) {
-      return
-    }
+    if (!content || !selectedPerson || !user) return
 
-    const { data, error } = await supabase
+    setNewMessage("")
+
+    const { error } = await supabase
       .from("messages")
       .insert({
         sender_id: user.id,
         receiver_id: selectedPerson.id,
         content,
       })
-      .select(
-        "id, sender_id, receiver_id, content, created_at"
-      )
-      .single()
 
     if (error) {
-      console.error(
-        "Send message error:",
-        error
-      )
-      return
+      console.error("Send message error:", error)
+      setNewMessage(content)
     }
-
-    setMessages((currentMessages) => [
-      ...currentMessages,
-      data,
-    ])
-
-    setNewMessage("")
   }
 
   if (loading) {
@@ -193,29 +237,24 @@ function Messages() {
           <nav>
             <a href="/">Home</a>
             <a href="/people">People</a>
-            <a href="/notifications">
-              Notifications
-            </a>
+            <a href="/notifications">Notifications</a>
           </nav>
         </header>
 
         <main className="home">
-
           <button
             className="back"
-            onClick={() =>
+            onClick={() => {
               setSelectedPerson(null)
-            }
+              setMessages([])
+            }}
           >
             ← back to messages
           </button>
 
-          <h2>
-            {selectedPerson.username}
-          </h2>
+          <h2>{selectedPerson.username}</h2>
 
           <section className="message-list">
-
             {messages.length === 0 ? (
               <p className="no-people">
                 No messages yet. Say hello!
@@ -234,29 +273,18 @@ function Messages() {
                 </div>
               ))
             )}
-
           </section>
 
-          <form
-            className="message-form"
-            onSubmit={handleSend}
-          >
+          <form className="message-form" onSubmit={handleSend}>
             <input
               type="text"
               value={newMessage}
-              onChange={(event) =>
-                setNewMessage(
-                  event.target.value
-                )
-              }
+              onChange={(event) => setNewMessage(event.target.value)}
               placeholder="Type a message..."
             />
 
-            <button type="submit">
-              Send
-            </button>
+            <button type="submit">Send</button>
           </form>
-
         </main>
       </div>
     )
@@ -272,14 +300,11 @@ function Messages() {
         <nav>
           <a href="/">Home</a>
           <a href="/people">People</a>
-          <a href="/notifications">
-            Notifications
-          </a>
+          <a href="/notifications">Notifications</a>
         </nav>
       </header>
 
       <main className="home">
-
         <a href="/" className="back">
           ← back home
         </a>
@@ -292,37 +317,23 @@ function Messages() {
           </p>
         ) : (
           <section className="message-people">
-
             {profiles.map((profile) => (
               <button
                 className="message-person"
                 key={profile.id}
-                onClick={() =>
-                  openConversation(profile)
-                }
+                onClick={() => openConversation(profile)}
               >
-
                 <div className="message-person-picture">
                   {profile.avatarDisplayUrl && (
-                    <img
-                      src={
-                        profile.avatarDisplayUrl
-                      }
-                      alt=""
-                    />
+                    <img src={profile.avatarDisplayUrl} alt="" />
                   )}
                 </div>
 
-                <strong>
-                  {profile.username}
-                </strong>
-
+                <strong>{profile.username}</strong>
               </button>
             ))}
-
           </section>
         )}
-
       </main>
     </div>
   )
